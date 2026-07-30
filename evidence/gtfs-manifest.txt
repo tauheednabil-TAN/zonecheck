@@ -1,0 +1,19 @@
+# GTFS archive manifest, retrieved 2026-07-30
+# NOTE: no fare_attributes.txt, no fare_rules.txt, no areas.txt
+
+Archive:  /c/Users/tauhe/AppData/Local/Temp/claude/C--Users-tauhe-OneDrive---Niels-Brock-Documents-Personal-project/1b217387-d8bb-44fa-b643-90214ed2cd93/scratchpad/gtfs/GTFS.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+     2117  2026-07-27 11:55   agency.txt
+      105  2021-04-02 20:54   attributions.txt
+    63868  2026-07-27 11:55   calendar.txt
+   269712  2026-07-27 11:55   calendar_dates.txt
+       64  2026-07-27 11:47   frequencies.txt
+    57124  2026-07-27 11:55   routes.txt
+115312417  2026-07-27 11:55   shapes.txt
+  3577822  2026-07-27 11:59   stops.txt
+258506581  2026-07-27 11:55   stop_times.txt
+  2271353  2026-07-27 11:55   transfers.txt
+ 12668734  2026-07-27 11:55   trips.txt
+---------                     -------
+392729897                     11 files

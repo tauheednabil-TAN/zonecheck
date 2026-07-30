@@ -1,0 +1,12 @@
+# stops.txt header, Rejseplanen GTFS, retrieved 2026-07-30
+# Source: https://www.rejseplanen.info/labs/GTFS.zip
+# NOTE: no zone_id column. 11 fields total.
+
+"stop_id","stop_code","stop_name","stop_desc","stop_lat","stop_lon","location_type","parent_station","wheelchair_boarding","platform_code","stop_timezone"
+
+# First 5 data rows:
+000461011300,"","Dyrupgårds Alle (Odense Kommune)",,"55.354917000000","10.345034000000",0,,0,"",""
+000008600718,"","Vipperød St.",,"55.666828000000","11.738710000000",0,,0,"",""
+000008600719,"","Holbæk St.",,"55.715750000000","11.708598000000",0,,0,"",""
+000008600716,"","Hvalsø St.",,"55.595537000000","11.859821000000",0,,0,"",""
+000008600717,"","Tølløse St.",,"55.611893000000","11.772803000000",0,,0,"",""

@@ -1,0 +1,27 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+.env
+.env.local
+.env*.local
+
+# Raw GTFS downloads are ~59 MB zipped, ~390 MB extracted. Never commit them.
+# scripts/build-zones.ts is expected to fetch on demand into this directory.
+.gtfs-cache/
+*.zip
+stops.txt
+stop_times.txt
+shapes.txt
+trips.txt
+
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+.vscode/
+.idea/
+coverage/
+.vitest/

@@ -108,15 +108,82 @@ Nothing here covers the Copenhagen DOT zone system the app is about. Parsing zon
 numbers out of stop names would produce a map with a few dozen scattered points
 in the wrong parts of Denmark. That is not a data source.
 
-## Pivot status
+## Pivot status — closed
 
-Per the M1 pivot rule:
+Per the M1 pivot rule, run to completion 2026-07-31:
 
 | Step | Status |
 |------|--------|
-| `zone_id` in Rejseplanen GTFS | **Failed — field absent. Settled.** |
-| OSM `fare_zone` via Overpass | **Untested.** Query started; public instance returned "server too busy"; mirror retry interrupted. No evidence either way. |
+| `zone_id` in Rejseplanen GTFS | **Failed — field absent.** |
+| OSM `fare_zone` via Overpass | **Failed — nothing usable.** |
 | Report to user with evidence | Done — this document. |
+
+### Overpass results
+
+Queried against `overpass-api.de`, Sjælland bounding box `(54.4, 10.8, 56.4, 12.9)`:
+
+| Query | Elements returned |
+|-------|-------------------|
+| `relation/way["boundary"="fare_zone"]` | **0** |
+| `node/way/relation["public_transport:zone"]` | **0** |
+
+The reason is structural, not a mapping gap: OpenStreetMap's `fare_zone` is a
+**proposed tag that was never adopted**. There is no established OSM scheme for
+Danish fare zones, so no amount of further querying will find one.
+
+No municipal or national open-data portal publishes the polygons either.
+
+**Conclusion: no real Copenhagen fare-zone geodata is publicly available.**
+
+## What was built instead
+
+After being shown the above, the project owner chose to build on the closest
+defensible approximation rather than shelve the app. That decision is recorded
+here so it is not mistaken for an oversight.
+
+The model is concentric rings centred on Rådhuspladsen — see
+`src/lib/zone-model.ts`. It reproduces the real system's ring *structure*, which
+is public knowledge, but not its real *boundaries*, which are not.
+
+### Accuracy: unknown, and unvalidatable today
+
+M4 called for cross-checking at least 10 known journeys against the Rejseplanen
+tariff API. **This was not done, and could not be.**
+
+- No API key is present in `.env.local`.
+- More fundamentally, the same missing ground truth that forced the model also
+  makes validating it impossible. Checking a model against itself proves nothing.
+
+So the honest accuracy figure is **unknown**. Not "roughly right", not
+"approximately 90%" — unknown. Anything else would be a number invented to look
+reassuring.
+
+**How to actually validate it**, when someone can:
+
+1. Get a Rejseplanen Labs account and check whether the REST API exposes tariff
+   zones per stop.
+2. Failing that, hand-check 20–30 stops spread across all nine rings against
+   DOT's published zone map, and record the hit rate in this file.
+3. Weight the sample toward zone boundaries and toward the outer rings, where a
+   circular model is most likely to disagree with a municipal border.
+
+Until one of those happens, treat every zone number the app shows as an
+orientation aid and nothing more.
+
+### Known structural errors
+
+These are certain, not hypothetical:
+
+- **Circles vs borders.** Real zones follow municipal boundaries and coastline.
+  Any point near a real boundary can fall in the wrong ring.
+- **Ring number ≠ DOT zone number.** The app shows a ring 1–9. The real system
+  has 97 numbered zones. These are different things and the UI says "zone ring"
+  rather than "zone" for that reason.
+- **Water is not excluded.** The rings are not clipped to the coastline, so a
+  point in Øresund still returns a ring. Clipping is unfinished work.
+- **Sweden is inside the rings.** Parts of Malmö fall within 40 km of
+  Rådhuspladsen and will return a ring, despite not being in the DOT system at
+  all. A coastline/border clip would fix this too.
 
 ## What must not happen next
 

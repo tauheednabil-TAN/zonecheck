@@ -15,8 +15,8 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import AdmZip from "adm-zip";
-import { ringForPoint, MAX_RING } from "../src/lib/zone-model";
-import { buildRingCollection } from "../src/lib/zone-geometry";
+import { ringForPoint, zoneForPoint, MAX_RING } from "../src/lib/zone-model";
+import { buildZoneCollection, buildZoneLabels } from "../src/lib/zone-geometry";
 import type { Stop, StopsFile } from "../src/lib/types";
 
 const FEED_URL = "https://www.rejseplanen.info/labs/GTFS.zip";
@@ -126,6 +126,7 @@ async function main() {
       lat,
       lon,
       ring: ringForPoint({ lat, lon }),
+      zone: zoneForPoint({ lat, lon })?.code ?? null,
     });
   }
 
@@ -151,12 +152,15 @@ async function main() {
     stops: deduped,
   };
 
-  const zones = buildRingCollection();
+  const zones = buildZoneCollection();
+  const labels = buildZoneLabels();
   const stopsPath = path.join(OUT_DIR, "stops.json");
   const zonesPath = path.join(OUT_DIR, "zones.geojson");
+  const labelsPath = path.join(OUT_DIR, "zone-labels.geojson");
 
   const stopsJson = JSON.stringify(stopsFile);
   const zonesJson = JSON.stringify(zones);
+  const labelsJson = JSON.stringify(labels);
 
   if (isDiffMode) {
     const drifted: string[] = [];
@@ -185,10 +189,12 @@ async function main() {
 
   fs.writeFileSync(stopsPath, stopsJson);
   fs.writeFileSync(zonesPath, zonesJson);
+  fs.writeFileSync(labelsPath, labelsJson);
 
   console.log(`\nFeed last modified: ${lastModified}`);
   console.log(`Stops in Greater Copenhagen bbox: ${deduped.length} (deduplicated by name+ring)`);
-  console.log(`Ring polygons written: ${zones.features.length} (rings 1..${MAX_RING})`);
+  console.log(`Zone cells written: ${zones.features.length} (rings 1..${MAX_RING})`);
+  console.log(`Zone labels written: ${labels.features.length}`);
   console.log("\nStops per ring:");
   for (let r = 1; r <= MAX_RING; r++) {
     console.log(`  ring ${r}: ${byRing.get(r) ?? 0}`);
@@ -198,11 +204,12 @@ async function main() {
   console.log("\n5 real sample stops:");
   const samples = deduped.filter((s) => s.ring !== null).slice(0, 5);
   for (const s of samples) {
-    console.log(`  ${s.id}  ring ${s.ring}  ${s.name}  (${s.lat.toFixed(5)}, ${s.lon.toFixed(5)})`);
+    console.log(`  ${s.id}  zone ${s.zone}  ring ${s.ring}  ${s.name}  (${s.lat.toFixed(5)}, ${s.lon.toFixed(5)})`);
   }
 
   console.log(`\nWrote ${stopsPath}`);
   console.log(`Wrote ${zonesPath}`);
+  console.log(`Wrote ${labelsPath}`);
 }
 
 main().catch((err) => {

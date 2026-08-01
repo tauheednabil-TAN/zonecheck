@@ -14,8 +14,20 @@ export function Disclaimer({
   variant = "short",
 }: {
   copy: Copy;
-  variant?: "short" | "long";
+  /**
+   * "official" is used only when Rejseplanen's own tariff service answered.
+   * It is still a caution, just an honest one — the number is real, but a zone
+   * is not a ticket.
+   */
+  variant?: "short" | "long" | "official";
 }) {
+  const text =
+    variant === "short"
+      ? copy.disclaimerShort
+      : variant === "official"
+        ? copy.disclaimerOfficial
+        : copy.disclaimerLong;
+
   return (
     <p
       role="note"
@@ -25,7 +37,7 @@ export function Disclaimer({
           : "text-xs leading-relaxed text-ink-muted dark:text-neutral-400"
       }
     >
-      {variant === "short" ? copy.disclaimerShort : copy.disclaimerLong}
+      {text}
     </p>
   );
 }

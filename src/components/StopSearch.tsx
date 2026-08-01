@@ -95,9 +95,9 @@ export function StopSearch({
                     className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-sm hover:bg-green-900/5 dark:text-neutral-100 dark:hover:bg-white/5"
                   >
                     <span className="min-w-0 truncate">{s.name}</span>
-                    {s.ring !== null && (
+                    {s.zone !== null && (
                       <span className="shrink-0 rounded-full bg-green-900 px-2 py-0.5 text-[11px] font-semibold text-white">
-                        {s.ring}
+                        {s.zone}
                       </span>
                     )}
                   </button>

@@ -46,33 +46,50 @@ usable. No municipal or national open-data portal publishes the polygons either.
 
 Full evidence in [DATA.md](DATA.md).
 
-### What the model does
+### Get real zones with a free key
 
-The real DOT system is genuinely concentric: nine coloured zone rings radiating
-from central Copenhagen, zone 1 at the centre, fare set by how many you cross.
-Zonecheck reproduces that ring structure as geodesic annuli centred on
-Rådhuspladsen. Ring radii live in one array in
+Rejseplanen exposes a `zoneFromCoordinate` API — the same tariff engine behind
+the official journey planner, returning genuine DOT zone ids. The app already
+speaks it.
+
+1. Create a free account at https://labs.rejseplanen.dk/ and request an
+   `accessId` for API 2.0.
+2. `cp .env.local.example .env.local` and paste the key in.
+3. Restart. Answers now read **"Official zone · Rejseplanen"** instead of
+   **"Estimated · not official"**.
+
+The key is read server-side only and never reaches the browser
+([`src/app/api/zone/route.ts`](src/app/api/zone/route.ts)). Without it the app
+falls back to the model below and says so on every answer.
+
+### What the model does (the fallback)
+
+Real DOT zones are ~211 discrete numbered cells, not rings. Observed structure:
+zone 01 is central Copenhagen, and other zones carry two-digit codes whose tens
+digit grows with distance and whose units digit varies with compass direction
+(4x lies west of 3x, which lies west of 1x).
+
+Zonecheck reproduces that ring-and-sector structure: a central disc plus eight
+sectors per ring, 65 cells in all, each drawn with a boundary and labelled with
+its number on the map. Geometry lives in
 [`src/lib/zone-model.ts`](src/lib/zone-model.ts).
+
+**Calibration.** Ring radii are fitted to the one hard public anchor available:
+central Copenhagen to the airport is a 3-zone ticket, valid 1 hr 30 min. The app
+reproduces exactly that. An earlier version used wider rings, returned 2 zones,
+and was wrong on the commonest journey in the city — there is a test pinning
+this so it cannot silently regress.
 
 **Known limits, stated plainly:**
 
 - Real boundaries follow municipal borders and coastline. These are circles.
   Expect errors near any boundary, growing with distance from the centre.
-- It produces a **ring number (1–9), not one of the 97 real DOT zone numbers.**
-- It has **never been validated against ground truth**, because no ground truth
-  is available to validate against. The honest accuracy figure is *unknown*.
+- Codes like `32` are **structurally plausible but are not the real DOT numbers.**
+  Do not read "32" here as DOT zone 32. Only the API path returns real ids.
+- Beyond the airport anchor it is **not validated against ground truth**. One
+  anchor cannot validate 65 cells. The honest accuracy figure is *unknown*.
 - Points beyond ring 9 return "outside the covered area" rather than being
   clamped to 9. A clamped answer would be a confident lie.
-
-### Replacing the model with real data
-
-Everything downstream consumes `ringForPoint()` and `RINGS`. Swap that one file
-for real polygons and nothing else changes. The build script already asserts on
-every run whether `zone_id` has appeared in the feed, and says so loudly if it
-ever does.
-
-Most likely real source: the Rejseplanen Labs REST API (free account at
-https://labs.rejseplanen.dk/), which may expose tariff data.
 
 ## Running it
 
@@ -90,6 +107,9 @@ npm run dev
 
 Then open http://localhost:3000. Geolocation needs HTTPS or localhost.
 
+For real zone numbers rather than estimates, add a Rejseplanen key first — see
+"Get real zones with a free key" above.
+
 `data:build` caches the GTFS download in `.gtfs-cache/` (gitignored, ~59 MB), so
 only the first run is slow.
 
@@ -99,9 +119,9 @@ only the first run is slow.
 |---------|--------------|
 | `npm run dev` | Dev server |
 | `npm run build` | Production build (typecheck included) |
-| `npm test` | 63 unit tests |
+| `npm test` | 75 unit tests |
 | `npm run lint` | ESLint |
-| `npm run data:build` | Rebuild `stops.json` + `zones.geojson` from the feed |
+| `npm run data:build` | Rebuild `stops.json`, `zones.geojson`, `zone-labels.geojson` |
 | `npm run data:refresh` | Rebuild and fail loudly if the output drifted |
 
 ## How it is built
@@ -116,17 +136,19 @@ rather than recolored from a stock style, so the palette is exact.
 | File | Role |
 |------|------|
 | `src/lib/zone-model.ts` | The approximation. Swap this to fix accuracy. |
-| `src/lib/zone-geometry.ts` | Ring polygons as GeoJSON |
+| `src/app/api/zone/route.ts` | Real zones via Rejseplanen, model fallback |
+| `src/lib/zone-geometry.ts` | Zone cells + number labels as GeoJSON |
 | `src/lib/map-style.ts` | Palette-exact MapLibre style |
 | `scripts/build-zones.ts` | GTFS → static data artifacts |
-| `tests/` | 63 tests, incl. 17 hand-verified coordinates |
+| `tests/` | 75 tests, incl. 17 hand-verified coordinates |
 
 ## Status
 
-Working: zone-from-location, palette-correct map with zone overlay and
-tap-to-inspect, journey mode with zone count and validity window, English and
-Danish, reduced-motion, out-of-coverage and permission-denied states, data-freshness
-stamp.
+Working: zone-from-location, look up any stop by name without GPS, a
+palette-correct map with numbered zone cells and drawn boundaries, tap-to-inspect,
+journey mode with zones crossed / zone count / validity window, optional real
+zones via the Rejseplanen API, English and Danish, reduced-motion,
+out-of-coverage and permission-denied states, data-freshness stamp.
 
 Not built: transit line overlays (metro/S-tog/regional from `shapes.txt`), the
 monthly GitHub Actions refresh cron, and a full screen-reader audit.

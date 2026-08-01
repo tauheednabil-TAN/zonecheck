@@ -1,27 +1,50 @@
 import { describe, it, expect } from "vitest";
-import { geodesicCircle, ringToPolygon, buildRingCollection } from "../src/lib/zone-geometry";
-import { CENTRE, RINGS, distanceKm } from "../src/lib/zone-model";
+import {
+  geodesicCircle,
+  destinationPoint,
+  sectorBearings,
+  zoneCellPolygon,
+  buildZoneCollection,
+  buildZoneLabels,
+} from "../src/lib/zone-geometry";
+import { CENTRE, RINGS, SECTORS, distanceKm, zoneForPoint } from "../src/lib/zone-model";
 
 /**
- * Point-in-polygon correctness for the rendered zone polygons.
+ * Point-in-polygon correctness for the rendered zone cells.
  *
- * These matter because the map draws the polygons while the readout uses the
- * analytic model. If the two ever disagree, the app shows a user a zone number
- * that contradicts the shape highlighted under their own dot.
+ * This matters because the map draws the polygons while the readout uses the
+ * analytic model. If they ever disagree, a user sees a zone number that
+ * contradicts the shape highlighted under their own dot.
  */
 
-/** Standard ray-casting. Deliberately independent of the app's own maths. */
-function pointInPolygon(pt: [number, number], ringCoords: number[][]): boolean {
+/** Standard ray-casting, deliberately independent of the app's own maths. */
+function pointInPolygon(pt: [number, number], ring: number[][]): boolean {
   const [x, y] = pt;
   let inside = false;
-  for (let i = 0, j = ringCoords.length - 1; i < ringCoords.length; j = i++) {
-    const [xi, yi] = ringCoords[i];
-    const [xj, yj] = ringCoords[j];
-    const intersects = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
-    if (intersects) inside = !inside;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const hits = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (hits) inside = !inside;
   }
   return inside;
 }
+
+describe("destinationPoint", () => {
+  it("lands exactly the requested distance away", () => {
+    for (const km of [1, 8.37, 42]) {
+      for (const b of [0, 90, 180, 270]) {
+        const [lon, lat] = destinationPoint(CENTRE, km, b);
+        expect(distanceKm(CENTRE, { lat, lon })).toBeCloseTo(km, 3);
+      }
+    }
+  });
+
+  it("goes north at bearing 0 and south at 180", () => {
+    expect(destinationPoint(CENTRE, 10, 0)[1]).toBeGreaterThan(CENTRE.lat);
+    expect(destinationPoint(CENTRE, 10, 180)[1]).toBeLessThan(CENTRE.lat);
+  });
+});
 
 describe("geodesicCircle", () => {
   it("closes the ring", () => {
@@ -29,107 +52,104 @@ describe("geodesicCircle", () => {
     expect(c[0]).toEqual(c[c.length - 1]);
   });
 
-  it("puts every vertex at the requested radius", () => {
-    for (const radius of [1, 5, 13, 40]) {
-      for (const [lon, lat] of geodesicCircle(CENTRE, radius, 32)) {
-        expect(distanceKm(CENTRE, { lat, lon })).toBeCloseTo(radius, 3);
-      }
-    }
-  });
-
   it("stays round at Copenhagen's latitude rather than squashing", () => {
-    // A naive degree-scaled circle collapses in longitude this far north.
-    const c = geodesicCircle(CENTRE, 20, 4);
-    const north = c[0];
-    const east = c[1];
-    expect(distanceKm(CENTRE, { lat: north[1], lon: north[0] })).toBeCloseTo(20, 3);
-    expect(distanceKm(CENTRE, { lat: east[1], lon: east[0] })).toBeCloseTo(20, 3);
+    for (const [lon, lat] of geodesicCircle(CENTRE, 20, 32)) {
+      expect(distanceKm(CENTRE, { lat, lon })).toBeCloseTo(20, 3);
+    }
   });
 });
 
-describe("ringToPolygon", () => {
-  it("makes ring 1 a solid disc with no hole", () => {
-    const f = ringToPolygon(RINGS[0]);
-    expect(f.geometry.coordinates).toHaveLength(1);
-    expect(f.properties.ring).toBe(1);
-  });
-
-  it("makes every outer ring an annulus with exactly one hole", () => {
-    for (const r of RINGS.slice(1)) {
-      const f = ringToPolygon(r);
-      expect(f.geometry.coordinates).toHaveLength(2);
-      expect(f.properties.innerKm).toBeGreaterThan(0);
+describe("sectorBearings", () => {
+  it("covers the full circle with no gaps", () => {
+    const width = 360 / SECTORS;
+    for (let s = 1; s <= SECTORS; s++) {
+      const { start, end } = sectorBearings(s);
+      expect(end - start).toBeCloseTo(width, 6);
     }
   });
 
-  it("winds the hole opposite to the outer boundary", () => {
-    const f = ringToPolygon(RINGS[2]);
-    const [outer, hole] = f.geometry.coordinates;
-    const signedArea = (ring: number[][]) => {
-      let a = 0;
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        a += (ring[j][0] - ring[i][0]) * (ring[j][1] + ring[i][1]);
-      }
-      return a;
-    };
-    expect(Math.sign(signedArea(outer))).not.toBe(Math.sign(signedArea(hole)));
+  it("centres each sector on its compass point", () => {
+    const { start, end } = sectorBearings(1);
+    expect((start + end) / 2).toBeCloseTo(0, 6);
+  });
+});
+
+describe("zoneCellPolygon", () => {
+  it("makes the central cell a closed disc", () => {
+    const f = zoneCellPolygon(1, 0, 0, RINGS[0].outerKm);
+    expect(f.properties.code).toBe("01");
+    const ring = f.geometry.coordinates[0];
+    expect(ring[0]).toEqual(ring[ring.length - 1]);
+  });
+
+  it("makes outer cells closed annular sectors", () => {
+    const f = zoneCellPolygon(3, 2, RINGS[2].innerKm, RINGS[2].outerKm);
+    expect(f.properties.code).toBe("32");
+    const ring = f.geometry.coordinates[0];
+    expect(ring[0]).toEqual(ring[ring.length - 1]);
+    expect(ring.length).toBeGreaterThan(8);
+  });
+
+  it("keeps every vertex between the inner and outer radius", () => {
+    const r = RINGS[3];
+    const f = zoneCellPolygon(r.ring, 5, r.innerKm, r.outerKm);
+    for (const [lon, lat] of f.geometry.coordinates[0]) {
+      const d = distanceKm(CENTRE, { lat, lon });
+      expect(d).toBeGreaterThanOrEqual(r.innerKm - 0.01);
+      expect(d).toBeLessThanOrEqual(r.outerKm + 0.01);
+    }
   });
 });
 
 describe("polygons agree with the analytic model", () => {
-  const latPerKm = 1 / 111.195;
+  it("every cell's own label point falls inside that cell's polygon", () => {
+    const cells = buildZoneCollection().features;
+    const labels = buildZoneLabels().features;
 
-  it("the centre falls inside ring 1's polygon and no other", () => {
-    const pt: [number, number] = [CENTRE.lon, CENTRE.lat];
-    for (const r of RINGS) {
-      const f = ringToPolygon(r);
-      const inOuter = pointInPolygon(pt, f.geometry.coordinates[0]);
-      const inHole =
-        f.geometry.coordinates[1] !== undefined &&
-        pointInPolygon(pt, f.geometry.coordinates[1]);
-      expect(inOuter && !inHole).toBe(r.ring === 1);
+    for (const label of labels) {
+      const cell = cells.find((c) => c.properties.code === label.properties.code);
+      expect(cell, `polygon exists for ${label.properties.code}`).toBeDefined();
+      expect(
+        pointInPolygon(label.geometry.coordinates, cell!.geometry.coordinates[0]),
+        `label ${label.properties.code} inside its own polygon`,
+      ).toBe(true);
     }
   });
 
-  it("a midpoint of each ring lands in that ring's band only", () => {
-    for (const r of RINGS) {
-      const mid = (r.innerKm + r.outerKm) / 2;
-      const pt: [number, number] = [CENTRE.lon, CENTRE.lat + mid * latPerKm];
-
-      const f = ringToPolygon(r);
-      const inOuter = pointInPolygon(pt, f.geometry.coordinates[0]);
-      const inHole =
-        f.geometry.coordinates[1] !== undefined &&
-        pointInPolygon(pt, f.geometry.coordinates[1]);
-
-      expect(inOuter, `ring ${r.ring} midpoint inside outer boundary`).toBe(true);
-      expect(inHole, `ring ${r.ring} midpoint outside the hole`).toBe(false);
+  it("the model assigns each label point to the zone it is labelled with", () => {
+    for (const label of buildZoneLabels().features) {
+      const [lon, lat] = label.geometry.coordinates;
+      expect(zoneForPoint({ lat, lon })?.code).toBe(label.properties.code);
     }
   });
 
-  it("a point beyond the outermost ring is in no polygon", () => {
-    const pt: [number, number] = [CENTRE.lon, CENTRE.lat + 60 * latPerKm];
-    for (const r of RINGS) {
-      const f = ringToPolygon(r);
-      expect(pointInPolygon(pt, f.geometry.coordinates[0])).toBe(false);
+  it("a point past the outermost ring is in no cell", () => {
+    const pt: [number, number] = destinationPoint(CENTRE, 60, 45);
+    for (const cell of buildZoneCollection().features) {
+      expect(pointInPolygon(pt, cell.geometry.coordinates[0])).toBe(false);
     }
   });
 });
 
-describe("buildRingCollection", () => {
-  it("emits one feature per ring", () => {
-    const fc = buildRingCollection();
-    expect(fc.type).toBe("FeatureCollection");
-    expect(fc.features).toHaveLength(RINGS.length);
+describe("buildZoneCollection", () => {
+  it("emits one central cell plus SECTORS cells for every outer ring", () => {
+    const fc = buildZoneCollection();
+    expect(fc.features).toHaveLength(1 + (RINGS.length - 1) * SECTORS);
   });
 
-  it("orders largest first so small central rings paint on top", () => {
-    const rings = buildRingCollection().features.map((f) => f.properties.ring);
-    expect(rings).toEqual([...rings].sort((a, b) => b - a));
+  it("gives every cell a unique code", () => {
+    const codes = buildZoneCollection().features.map((f) => f.properties.code);
+    expect(new Set(codes).size).toBe(codes.length);
   });
 
-  it("is valid GeoJSON geometry throughout", () => {
-    for (const f of buildRingCollection().features) {
+  it("orders outermost first so the centre paints on top", () => {
+    const rings = buildZoneCollection().features.map((f) => f.properties.ring);
+    expect(rings[0]).toBe(RINGS.length);
+    expect(rings[rings.length - 1]).toBe(1);
+  });
+
+  it("is valid GeoJSON throughout", () => {
+    for (const f of buildZoneCollection().features) {
       expect(f.geometry.type).toBe("Polygon");
       for (const ring of f.geometry.coordinates) {
         expect(ring.length).toBeGreaterThan(3);
@@ -141,5 +161,17 @@ describe("buildRingCollection", () => {
         }
       }
     }
+  });
+});
+
+describe("buildZoneLabels", () => {
+  it("emits exactly one label per cell", () => {
+    expect(buildZoneLabels().features).toHaveLength(buildZoneCollection().features.length);
+  });
+
+  it("puts the central label at the centre", () => {
+    const centre = buildZoneLabels().features.find((f) => f.properties.code === "01")!;
+    expect(centre.geometry.coordinates[0]).toBeCloseTo(CENTRE.lon, 6);
+    expect(centre.geometry.coordinates[1]).toBeCloseTo(CENTRE.lat, 6);
   });
 });

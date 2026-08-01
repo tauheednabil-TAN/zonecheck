@@ -21,6 +21,7 @@ export const PALETTE = {
   ink: "#1A1A1A",
   inkMuted: "#6B7280",
   green900: "#0F4429",
+  green700: "#1B6B3A",
   accent: "#F5851F",
 } as const;
 

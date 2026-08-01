@@ -2,20 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import {
-  ringForPoint,
-  ringsCrossed,
-  billableZoneCount,
-  validityMinutes,
-} from "@/lib/zone-model";
+import { zoneForPoint, zonesCrossed, billableZoneCount, validityMinutes } from "@/lib/zone-model";
 import type { Stop, StopsFile } from "@/lib/types";
 import { t, type Lang } from "@/lib/i18n";
 import { Disclaimer } from "@/components/Disclaimer";
-import { ZonePill, ZonePillRow } from "@/components/ZonePill";
 import { StopSearch } from "@/components/StopSearch";
+import { InfoBox } from "@/components/InfoBox";
 import type { Marker } from "@/components/MapView";
 
-// MapLibre touches `window` at import time, so it can never be server-rendered.
 const MapView = dynamic(() => import("@/components/MapView").then((m) => m.MapView), {
   ssr: false,
   loading: () => <div className="absolute inset-0 bg-map-urban" />,
@@ -24,11 +18,20 @@ const MapView = dynamic(() => import("@/components/MapView").then((m) => m.MapVi
 type LocState =
   | { status: "idle" }
   | { status: "locating" }
-  | { status: "ok"; lat: number; lon: number; ring: number | null }
+  | { status: "ok"; lat: number; lon: number }
   | { status: "denied" }
   | { status: "unavailable" };
 
 type Mode = "here" | "journey";
+
+/** "1 hr, 30 min" — matches how the official ticket screens phrase it. */
+function formatValidity(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} hr`;
+  return `${h} hr, ${m} min`;
+}
 
 export default function Page() {
   const [lang, setLang] = useState<Lang>("en");
@@ -36,11 +39,16 @@ export default function Page() {
 
   const [mode, setMode] = useState<Mode>("here");
   const [loc, setLoc] = useState<LocState>({ status: "idle" });
-  const [probe, setProbe] = useState<{ lat: number; lon: number; ring: number | null } | null>(null);
+  const [probe, setProbe] = useState<{ lat: number; lon: number } | null>(null);
+  const [lookup, setLookup] = useState<Stop | null>(null);
   const [data, setData] = useState<StopsFile | null>(null);
   const [from, setFrom] = useState<Stop | null>(null);
   const [to, setTo] = useState<Stop | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const [official, setOfficial] = useState<{
+    source: "rejseplanen" | "model";
+    zone: number | null;
+  } | null>(null);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -65,98 +73,118 @@ export default function Page() {
     setLoc({ status: "locating" });
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const { latitude: lat, longitude: lon } = pos.coords;
-        setLoc({ status: "ok", lat, lon, ring: ringForPoint({ lat, lon }) });
+        setLoc({ status: "ok", lat: pos.coords.latitude, lon: pos.coords.longitude });
         setProbe(null);
+        setLookup(null);
       },
-      (err) => {
-        setLoc({ status: err.code === err.PERMISSION_DENIED ? "denied" : "unavailable" });
-      },
+      (err) =>
+        setLoc({ status: err.code === err.PERMISSION_DENIED ? "denied" : "unavailable" }),
       { enableHighAccuracy: true, timeout: 8000, maximumAge: 30_000 },
     );
   }, []);
 
   const handleMapTap = useCallback((lat: number, lon: number) => {
-    setProbe({ lat, lon, ring: ringForPoint({ lat, lon }) });
+    setProbe({ lat, lon });
+    setLookup(null);
   }, []);
 
+  /** The point currently being asked about. */
+  const target = lookup
+    ? { lat: lookup.lat, lon: lookup.lon }
+    : probe
+      ? { lat: probe.lat, lon: probe.lon }
+      : loc.status === "ok"
+        ? { lat: loc.lat, lon: loc.lon }
+        : null;
+
+  useEffect(() => {
+    if (!target) {
+      setOfficial(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/zone?lat=${target.lat}&lon=${target.lon}`)
+      .then((r) => r.json())
+      .then((d) => !cancelled && setOfficial(d))
+      .catch(() => !cancelled && setOfficial(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [target?.lat, target?.lon]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const targetZone = target ? zoneForPoint(target) : null;
+  const isOfficial = official?.source === "rejseplanen" && official.zone !== null;
+  const zoneLabel = isOfficial ? String(official!.zone).padStart(3, "0") : targetZone?.code ?? null;
+
+  const journey = useMemo(() => {
+    if (!from || !to) return null;
+    const zones = zonesCrossed(from, to);
+    if (zones.length === 0) return null;
+    const count = billableZoneCount(zones.length);
+    return { zones, count, minutes: validityMinutes(count) };
+  }, [from, to]);
+
   const markers = useMemo<Marker[]>(() => {
-    const out: Marker[] = [];
     if (mode === "journey") {
+      const out: Marker[] = [];
       if (from) out.push({ lat: from.lat, lon: from.lon, kind: "from" });
       if (to) out.push({ lat: to.lat, lon: to.lon, kind: "to" });
       return out;
     }
-    if (loc.status === "ok") out.push({ lat: loc.lat, lon: loc.lon, kind: "user" });
-    if (probe) out.push({ lat: probe.lat, lon: probe.lon, kind: "probe" });
-    return out;
-  }, [mode, loc, probe, from, to]);
+    return target ? [{ lat: target.lat, lon: target.lon, kind: "user" }] : [];
+  }, [mode, target?.lat, target?.lon, from, to]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const journeyLine = useMemo<[number, number][] | null>(() => {
-    if (mode !== "journey" || !from || !to) return null;
-    return [
-      [from.lon, from.lat],
-      [to.lon, to.lat],
-    ];
-  }, [mode, from, to]);
+  const journeyLine = useMemo<[number, number][] | null>(
+    () =>
+      mode === "journey" && from && to
+        ? [
+            [from.lon, from.lat],
+            [to.lon, to.lat],
+          ]
+        : null,
+    [mode, from, to],
+  );
 
-  const journey = useMemo(() => {
-    if (!from || !to || from.ring === null || to.ring === null) return null;
-    const rings = ringsCrossed(from.ring, to.ring);
-    const count = billableZoneCount(rings.length);
-    return { rings, count, minutes: validityMinutes(count) };
-  }, [from, to]);
-
-  // Which ring the map should highlight.
-  const activeRing = useMemo(() => {
-    if (mode === "journey") return from?.ring ?? to?.ring ?? null;
-    if (probe) return probe.ring;
-    return loc.status === "ok" ? loc.ring : null;
-  }, [mode, probe, loc, from, to]);
-
-  const shown = probe ?? (loc.status === "ok" ? loc : null);
+  const activeZone = useMemo(() => {
+    if (mode === "journey") return from?.zone ?? to?.zone ?? null;
+    return targetZone?.code ?? null;
+  }, [mode, from, to, targetZone]);
 
   return (
-    <main className="relative h-[100dvh] w-full overflow-hidden">
-      <MapView
-        activeRing={activeRing}
-        markers={markers}
-        journeyLine={journeyLine}
-        onMapTap={handleMapTap}
-        reducedMotion={reducedMotion}
-      />
+    <main className="relative flex h-[100dvh] w-full flex-col overflow-hidden bg-surface dark:bg-neutral-950">
+      {/* Map occupies the top third, as on the reference ticket screens. */}
+      <div className="relative h-[38dvh] shrink-0">
+        <MapView
+          activeZone={activeZone}
+          markers={markers}
+          journeyLine={journeyLine}
+          onMapTap={handleMapTap}
+          reducedMotion={reducedMotion}
+        />
 
-      {/* Header */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-10 p-3">
-        <div className="pointer-events-auto flex items-center justify-between gap-2 rounded-2xl bg-surface/92 px-3 py-2 shadow-sm backdrop-blur dark:bg-neutral-900/92">
-          <div className="min-w-0">
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-3">
+          <div className="pointer-events-auto rounded-2xl bg-surface/95 px-3 py-1.5 shadow-sm backdrop-blur dark:bg-neutral-900/95">
             <h1 className="text-sm font-semibold text-green-900 dark:text-green-100">
               {copy.appName}
             </h1>
-            <p className="truncate text-[11px] text-ink-muted dark:text-neutral-400">
-              {copy.tagline}
-            </p>
           </div>
           <button
             type="button"
             onClick={() => setLang(lang === "en" ? "da" : "en")}
-            className="shrink-0 rounded-lg border border-green-700/30 px-2.5 py-1 text-xs font-medium text-green-700 dark:text-green-300"
+            className="pointer-events-auto rounded-full bg-green-900 px-3 py-1.5 text-xs font-medium text-white shadow-sm"
           >
             {copy.langToggle}
           </button>
         </div>
-      </header>
+      </div>
 
-      {/* Bottom sheet */}
-      <div className="absolute inset-x-0 bottom-0 z-10 max-h-[72dvh] overflow-y-auto rounded-t-3xl bg-surface shadow-[0_-4px_24px_rgba(0,0,0,0.12)] dark:bg-neutral-900">
-        <div className="mx-auto mt-2 h-1 w-9 rounded-full bg-black/15 dark:bg-white/20" />
-
-        <div className="space-y-4 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3">
-          {/* Mode switch */}
+      {/* Sheet */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="space-y-5 px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-5">
           <div
             role="tablist"
             aria-label="Mode"
-            className="grid grid-cols-2 gap-1 rounded-xl bg-black/5 p-1 dark:bg-white/10"
+            className="grid grid-cols-2 gap-1 rounded-full bg-black/[0.06] p-1 dark:bg-white/10"
           >
             {(["here", "journey"] as Mode[]).map((m) => (
               <button
@@ -164,10 +192,8 @@ export default function Page() {
                 role="tab"
                 aria-selected={mode === m}
                 onClick={() => setMode(m)}
-                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                  mode === m
-                    ? "bg-green-900 text-white"
-                    : "text-ink-muted dark:text-neutral-300"
+                className={`rounded-full px-3 py-2 text-sm font-medium transition-colors ${
+                  mode === m ? "bg-green-900 text-white" : "text-ink-muted dark:text-neutral-300"
                 }`}
               >
                 {m === "here" ? copy.findMyZone : copy.journey}
@@ -176,76 +202,89 @@ export default function Page() {
           </div>
 
           {mode === "here" ? (
-            <section className="space-y-3" aria-live="polite">
-              {loc.status === "idle" && !probe && (
+            <section className="space-y-5" aria-live="polite">
+              {!target && loc.status !== "locating" && (
                 <>
                   <button
                     type="button"
                     onClick={locate}
-                    className="w-full rounded-xl bg-green-900 px-4 py-3.5 text-base font-semibold text-white active:bg-green-700"
+                    className="w-full rounded-2xl bg-green-900 px-4 py-4 text-base font-semibold text-white active:bg-green-700"
                   >
                     {copy.findMyZone}
                   </button>
-                  <p className="text-xs text-ink-muted dark:text-neutral-400">
+
+                  <StopSearch
+                    label={copy.orCheckPlace}
+                    placeholder={copy.searchStops}
+                    stops={data?.stops ?? []}
+                    selected={null}
+                    onSelect={setLookup}
+                  />
+
+                  <p className="text-xs leading-relaxed text-ink-muted dark:text-neutral-400">
+                    {copy.tryExamples} København H · Nørreport St. · Nørrebro St. ·
+                    Københavns Lufthavn
+                    <br />
                     {copy.tapMapHint}
                   </p>
                 </>
               )}
 
               {loc.status === "locating" && (
-                <p className="py-3 text-center text-sm text-ink-muted">{copy.locating}</p>
+                <p className="py-6 text-center text-sm text-ink-muted">{copy.locating}</p>
               )}
 
-              {(loc.status === "denied" || loc.status === "unavailable") && (
-                <div className="space-y-2 rounded-xl bg-black/5 p-3 dark:bg-white/10">
-                  <p className="text-sm font-medium dark:text-neutral-100">
+              {(loc.status === "denied" || loc.status === "unavailable") && !target && (
+                <InfoBox tone="warn">
+                  <p className="font-medium dark:text-neutral-100">
                     {loc.status === "denied" ? copy.denied : copy.unavailable}
                   </p>
-                  <p className="text-xs text-ink-muted dark:text-neutral-400">
+                  <p className="mt-1 text-ink-muted dark:text-neutral-400">
                     {loc.status === "denied" ? copy.deniedHelp : copy.unavailableHelp}
                   </p>
-                  <button
-                    type="button"
-                    onClick={locate}
-                    className="rounded-lg border border-green-700/40 px-3 py-1.5 text-sm font-medium text-green-700 dark:text-green-300"
-                  >
-                    {copy.retry}
-                  </button>
-                </div>
+                </InfoBox>
               )}
 
-              {shown && (
-                <div className="space-y-3">
-                  {shown.ring !== null ? (
-                    <div className="flex items-center gap-4">
-                      <ZonePill ring={shown.ring} />
-                      <div className="min-w-0">
-                        <p className="text-sm text-ink-muted dark:text-neutral-400">
-                          {probe ? copy.inspecting : copy.youAreIn}
-                        </p>
-                        <p className="text-xl font-semibold text-green-900 dark:text-green-100">
-                          {copy.zoneRing} {shown.ring}
-                        </p>
-                      </div>
+              {target && (
+                <div className="space-y-5">
+                  {zoneLabel ? (
+                    <div>
+                      <p className="truncate text-sm text-ink-muted dark:text-neutral-400">
+                        {lookup ? lookup.name : probe ? copy.inspecting : copy.youAreIn}
+                      </p>
+                      <h2 className="mt-1 text-5xl font-bold tracking-tight text-ink dark:text-neutral-50">
+                        {copy.zoneWord} {zoneLabel}
+                      </h2>
+                      <span
+                        className={`mt-3 inline-block rounded-full px-3 py-1 text-xs font-medium ${
+                          isOfficial
+                            ? "bg-green-900 text-white"
+                            : "bg-black/[0.07] text-ink-muted dark:bg-white/15 dark:text-neutral-300"
+                        }`}
+                      >
+                        {isOfficial ? copy.sourceOfficial : copy.sourceEstimate}
+                      </span>
                     </div>
                   ) : (
-                    <div className="rounded-xl bg-black/5 p-3 dark:bg-white/10">
-                      <p className="text-sm font-medium dark:text-neutral-100">
+                    <div>
+                      <h2 className="text-2xl font-bold tracking-tight text-ink dark:text-neutral-50">
                         {copy.outsideArea}
-                      </p>
-                      <p className="mt-1 text-xs text-ink-muted dark:text-neutral-400">
+                      </h2>
+                      <p className="mt-2 text-sm text-ink-muted dark:text-neutral-400">
                         {copy.outsideAreaHelp}
                       </p>
                     </div>
                   )}
 
-                  {/* Required on every surface stating a zone. */}
-                  <Disclaimer copy={copy} variant="long" />
+                  <InfoBox>
+                    <Disclaimer copy={copy} variant={isOfficial ? "official" : "long"} />
+                  </InfoBox>
 
                   <button
                     type="button"
                     onClick={() => {
                       setProbe(null);
+                      setLookup(null);
                       setLoc({ status: "idle" });
                     }}
                     className="text-sm font-medium text-green-700 dark:text-green-300"
@@ -256,7 +295,7 @@ export default function Page() {
               )}
             </section>
           ) : (
-            <section className="space-y-3" aria-live="polite">
+            <section className="space-y-4" aria-live="polite">
               <StopSearch
                 label={copy.from}
                 placeholder={copy.searchStops}
@@ -273,52 +312,51 @@ export default function Page() {
               />
 
               {journey && (
-                <div className="space-y-3 rounded-xl bg-green-900/5 p-3">
+                <div className="space-y-5 pt-1">
                   <div>
-                    <p className="mb-1.5 text-xs text-ink-muted dark:text-neutral-400">
+                    <h2 className="text-5xl font-bold tracking-tight text-ink dark:text-neutral-50">
+                      {journey.count} {copy.zonesWord}
+                    </h2>
+                    <p className="mt-2 text-sm text-ink-muted dark:text-neutral-400">
+                      {copy.validFor} {formatValidity(journey.minutes)}
+                    </p>
+                  </div>
+
+                  <InfoBox>
+                    <p className="text-center text-xs leading-relaxed text-ink-muted dark:text-neutral-400">
+                      {copy.ticketRule}
+                    </p>
+                  </InfoBox>
+
+                  <div>
+                    <p className="mb-2 text-xs font-medium text-ink-muted dark:text-neutral-400">
                       {copy.zonesCrossed}
                     </p>
-                    <ZonePillRow rings={journey.rings} />
-                  </div>
-
-                  <div className="flex gap-6">
-                    <div>
-                      <p className="text-xs text-ink-muted dark:text-neutral-400">
-                        {copy.zoneCount}
-                      </p>
-                      <p className="text-2xl font-semibold tabular-nums text-green-900 dark:text-green-100">
-                        {journey.count}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-ink-muted dark:text-neutral-400">
-                        {copy.validFor}
-                      </p>
-                      <p className="text-2xl font-semibold tabular-nums text-green-900 dark:text-green-100">
-                        {journey.minutes}{" "}
-                        <span className="text-sm font-normal">{copy.minutes}</span>
-                      </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {journey.zones.map((z) => (
+                        <span
+                          key={z}
+                          className="inline-flex h-9 min-w-9 items-center justify-center rounded-full bg-green-900 px-2.5 text-sm font-semibold tabular-nums text-white"
+                        >
+                          {z}
+                        </span>
+                      ))}
                     </div>
                   </div>
 
-                  {journey.rings.length < 2 && (
-                    <p className="text-xs text-ink-muted dark:text-neutral-400">
-                      {copy.minFareNote}
-                    </p>
-                  )}
-
-                  <Disclaimer copy={copy} variant="long" />
+                  <InfoBox>
+                    <Disclaimer copy={copy} variant="long" />
+                  </InfoBox>
                 </div>
               )}
             </section>
           )}
 
-          <footer className="border-t border-black/5 pt-3 dark:border-white/10">
+          <footer className="border-t border-black/[0.07] pt-4 dark:border-white/10">
             <Disclaimer copy={copy} variant="short" />
             {data && (
-              <p className="mt-1.5 text-[11px] text-ink-muted dark:text-neutral-500">
-                {copy.dataAsOf} {data.generatedAt} · {copy.feedUpdated}{" "}
-                {data.feedLastModified}
+              <p className="mt-2 text-[11px] text-ink-muted dark:text-neutral-500">
+                {copy.dataAsOf} {data.generatedAt} · {copy.feedUpdated} {data.feedLastModified}
               </p>
             )}
           </footer>

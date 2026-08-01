@@ -6,6 +6,8 @@ export interface Stop {
   lon: number;
   /** Ring assigned by the approximate model, or null if outside coverage. */
   ring: number | null;
+  /** Two-digit zone code from the model, e.g. "01" or "32". Not a real DOT number. */
+  zone: string | null;
 }
 
 export interface StopsFile {

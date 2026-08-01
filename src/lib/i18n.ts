@@ -20,7 +20,7 @@ export const COPY = {
     searchStops: "Search a stop…",
     zonesCrossed: "Zones crossed",
     zoneCount: "Zones to pay for",
-    validFor: "Ticket valid for",
+    validFor: "Valid for:",
     minutes: "minutes",
     clear: "Clear",
     dataAsOf: "Zone data as of",
@@ -39,6 +39,17 @@ export const COPY = {
     howItWorks: "How this works",
     langToggle: "Dansk",
     minFareNote: "DOT's minimum fare is 2 zones.",
+    orCheckPlace: "Or look up a place",
+    placeZone: "Estimated zone",
+    tryExamples: "Try:",
+    sourceOfficial: "Official zone · Rejseplanen",
+    sourceEstimate: "Estimated · not official",
+    zoneWord: "Zone",
+    disclaimerOfficial:
+      "This zone comes from Rejseplanen's own tariff service. It is accurate at the time of lookup, but still buy the ticket your operator requires.",
+    zonesWord: "zones",
+    ticketRule:
+      "Tickets for 1-8 zones are valid for an unlimited number of trips by bus, train, and metro within the time and zone validity.",
   },
   da: {
     appName: "Zonecheck",
@@ -58,7 +69,7 @@ export const COPY = {
     searchStops: "Søg et stoppested…",
     zonesCrossed: "Zoner krydset",
     zoneCount: "Zoner der skal betales for",
-    validFor: "Billet gyldig i",
+    validFor: "Gyldig i:",
     minutes: "minutter",
     clear: "Ryd",
     dataAsOf: "Zonedata pr.",
@@ -78,6 +89,17 @@ export const COPY = {
     howItWorks: "Sådan virker det",
     langToggle: "English",
     minFareNote: "DOT's minimumstakst er 2 zoner.",
+    orCheckPlace: "Eller slå et sted op",
+    placeZone: "Anslået zone",
+    tryExamples: "Prøv:",
+    sourceOfficial: "Officiel zone · Rejseplanen",
+    sourceEstimate: "Anslået · ikke officiel",
+    zoneWord: "Zone",
+    disclaimerOfficial:
+      "Denne zone kommer fra Rejseplanens egen takstservice. Den er korrekt på opslagstidspunktet, men køb stadig den billet, dit selskab kræver.",
+    zonesWord: "zoner",
+    ticketRule:
+      "Billetter til 1-8 zoner gælder til et ubegrænset antal rejser med bus, tog og metro inden for tids- og zonegyldigheden.",
   },
 } as const;
 

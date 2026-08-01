@@ -13,13 +13,13 @@ export interface Marker {
 }
 
 export function MapView({
-  activeRing,
+  activeZone,
   markers,
   journeyLine,
   onMapTap,
   reducedMotion,
 }: {
-  activeRing: number | null;
+  activeZone: string | null;
   markers: Marker[];
   journeyLine: [number, number][] | null;
   onMapTap: (lat: number, lon: number) => void;
@@ -28,8 +28,6 @@ export function MapView({
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MLMap | null>(null);
   const ready = useRef(false);
-  // Keep the tap handler in a ref so re-registering it never detaches the
-  // listener mid-gesture.
   const tapRef = useRef(onMapTap);
   tapRef.current = onMapTap;
 
@@ -40,39 +38,53 @@ export function MapView({
       container: container.current,
       style: buildMapStyle(),
       center: [CENTRE.lon, CENTRE.lat],
-      zoom: 10,
+      zoom: 9.5,
       attributionControl: { compact: true },
     });
     map.current = m;
 
     m.on("load", () => {
       m.addSource("zones", { type: "geojson", data: "/data/zones.geojson" });
+      m.addSource("zone-labels", { type: "geojson", data: "/data/zone-labels.geojson" });
 
+      // Faint tint, alternating by ring so neighbouring bands stay readable
+      // without introducing a second hue.
       m.addLayer({
         id: "zone-fill",
         type: "fill",
         source: "zones",
         paint: {
           "fill-color": PALETTE.green900,
-          // Alternating bands so adjacent rings stay distinguishable without
-          // introducing a second hue.
-          "fill-opacity": ["case", ["==", ["%", ["get", "ring"], 2], 0], 0.1, 0.16],
+          "fill-opacity": ["case", ["==", ["%", ["get", "ring"], 2], 0], 0.05, 0.09],
         },
       });
 
+      // The boundaries. This is what makes it read as a zone map.
       m.addLayer({
         id: "zone-line",
         type: "line",
         source: "zones",
-        paint: { "line-color": PALETTE.green900, "line-width": 1, "line-opacity": 0.5 },
+        paint: {
+          "line-color": PALETTE.green900,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.6, 14, 1.6],
+          "line-opacity": 0.45,
+        },
       });
 
       m.addLayer({
         id: "zone-active",
         type: "fill",
         source: "zones",
-        filter: ["==", ["get", "ring"], -1],
-        paint: { "fill-color": PALETTE.green900, "fill-opacity": 0.34 },
+        filter: ["==", ["get", "code"], "___none___"],
+        paint: { "fill-color": PALETTE.green900, "fill-opacity": 0.3 },
+      });
+
+      m.addLayer({
+        id: "zone-active-line",
+        type: "line",
+        source: "zones",
+        filter: ["==", ["get", "code"], "___none___"],
+        paint: { "line-color": PALETTE.green900, "line-width": 2.5 },
       });
 
       m.addSource("journey", {
@@ -85,8 +97,8 @@ export function MapView({
         source: "journey",
         paint: {
           "line-color": PALETTE.accent,
-          "line-width": 3.5,
-          "line-dasharray": [2, 1.6],
+          "line-width": 4,
+          "line-dasharray": [1.6, 1.4],
         },
       });
 
@@ -99,10 +111,10 @@ export function MapView({
         type: "circle",
         source: "markers",
         paint: {
-          "circle-radius": 11,
+          "circle-radius": 12,
           "circle-color": "#FFFFFF",
           "circle-stroke-width": 1,
-          "circle-stroke-color": "rgba(0,0,0,0.15)",
+          "circle-stroke-color": "rgba(0,0,0,0.18)",
         },
       });
       m.addLayer({
@@ -110,15 +122,35 @@ export function MapView({
         type: "circle",
         source: "markers",
         paint: {
-          "circle-radius": 6,
+          "circle-radius": 7,
           "circle-color": [
             "match",
             ["get", "kind"],
             "user", PALETTE.green900,
             "from", PALETTE.accent,
             "to", PALETTE.accent,
-            PALETTE.inkMuted,
+            PALETTE.green700,
           ],
+        },
+      });
+
+      // Zone numbers, on top of everything, in a white pill like a printed
+      // fare-zone map. Added last so they never sit under a marker.
+      m.addLayer({
+        id: "zone-number",
+        type: "symbol",
+        source: "zone-labels",
+        layout: {
+          "text-field": ["get", "code"],
+          "text-font": ["Noto Sans Bold"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 8, 11, 13, 16],
+          "text-allow-overlap": false,
+          "text-padding": 6,
+        },
+        paint: {
+          "text-color": PALETTE.green900,
+          "text-halo-color": "#FFFFFF",
+          "text-halo-width": 2.2,
         },
       });
 
@@ -135,19 +167,19 @@ export function MapView({
     };
   }, []);
 
-  // Highlight the active ring.
   useEffect(() => {
     const m = map.current;
     if (!m) return;
     const apply = () => {
       if (!m.getLayer("zone-active")) return;
-      m.setFilter("zone-active", ["==", ["get", "ring"], activeRing ?? -1]);
+      const f = ["==", ["get", "code"], activeZone ?? "___none___"] as never;
+      m.setFilter("zone-active", f);
+      m.setFilter("zone-active-line", f);
     };
     if (ready.current) apply();
     else m.once("idle", apply);
-  }, [activeRing]);
+  }, [activeZone]);
 
-  // Markers.
   useEffect(() => {
     const m = map.current;
     if (!m) return;
@@ -167,7 +199,6 @@ export function MapView({
     else m.once("idle", apply);
   }, [markers]);
 
-  // Journey line.
   useEffect(() => {
     const m = map.current;
     if (!m) return;
@@ -191,10 +222,17 @@ export function MapView({
     else m.once("idle", apply);
   }, [journeyLine]);
 
-  // Fly to the newest marker. Honours prefers-reduced-motion by jumping.
   useEffect(() => {
     const m = map.current;
     if (!m || markers.length === 0) return;
+
+    if (journeyLine && markers.length >= 2) {
+      const b = new maplibregl.LngLatBounds();
+      for (const mk of markers) b.extend([mk.lon, mk.lat]);
+      m.fitBounds(b, { padding: 60, duration: reducedMotion ? 0 : 800, maxZoom: 12 });
+      return;
+    }
+
     const last = markers[markers.length - 1];
     if (reducedMotion) {
       m.jumpTo({ center: [last.lon, last.lat], zoom: Math.max(m.getZoom(), 11) });
@@ -206,7 +244,9 @@ export function MapView({
         essential: true,
       });
     }
-  }, [markers, reducedMotion]);
+  }, [markers, journeyLine, reducedMotion]);
 
-  return <div ref={container} className="absolute inset-0" aria-label="Zone map" role="application" />;
+  return (
+    <div ref={container} className="absolute inset-0" aria-label="Zone map" role="application" />
+  );
 }

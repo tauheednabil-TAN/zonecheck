@@ -1,6 +1,6 @@
 # PROGRESS
 
-Last updated: 2026-07-31
+Last updated: 2026-07-31 (second pass)
 
 ## Milestones
 
@@ -70,9 +70,34 @@ zone numbers are modelled and unvalidated. See README.md and DATA.md.
 - Verified in the running app at 375×812: geolocation, journey, Danish toggle,
   out-of-coverage state, disclaimer presence.
 
+## Second pass — 2026-07-31
+
+Triggered by user feedback that the zone numbers were wrong and that common
+places could not be looked up. Both complaints were correct.
+
+- **Found the real data source.** Rejseplanen's `zoneFromCoordinate` API returns
+  genuine DOT zone ids. Wired up behind `REJSEPLANEN_ACCESS_ID`; the app labels
+  answers "Official" when it responds and "Estimated" when it falls back. Key is
+  server-side only. Needs a free account to activate.
+- **Fixed a real accuracy bug.** The old ring radii put the airport in ring 2, so
+  Kobenhavn H to the airport reported 2 zones. The real ticket is 3 zones. Radii
+  refitted to that anchor; a test now pins it.
+- **Restructured zones from rings to cells.** Real DOT zones are discrete
+  numbered areas, not bands. Now 65 cells (central disc + 8 sectors x 8 rings)
+  with two-digit codes and drawn boundaries.
+- **Zone numbers now render on the map**, one per cell, white-haloed.
+- **Added place lookup without GPS** in "Find my zone" — the reported gap.
+- **Restyled to match the official ticket screens**: large bold count, "Valid
+  for: 1 hr, 30 min", bordered info box with a notched badge.
+- Verified live: Kobenhavn H to Kobenhavns Lufthavn returns "3 zones / Valid
+  for: 1 hr, 30 min", zones 01 to 24 to 34. Matches the reference screenshot.
+- 75 tests pass. Build and lint clean.
+
 ## Next
 
-1. `npm run qa`, then `/review`, then `/ship` (M8).
+1. Add a Rejseplanen key. That turns every estimate into a real zone and is
+   worth more than any remaining milestone.
+2. `npm run qa`, then `/review`, then `/ship` (M8).
 2. M5 transit overlays.
 3. Replace `src/lib/zone-model.ts` the moment real zone data can be sourced. That
    single swap is worth more than every remaining milestone combined.
